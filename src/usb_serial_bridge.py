@@ -1284,8 +1284,11 @@ def scan_serial_ports():
     # Always enrich pyserial results with WMI.  A low-numbered WCH peripheral
     # must not prevent a generic "USB Serial Device" ESP32 port being seen.
     try:
+        # Filter server-side: this runs every 5 s, and iterating every PnP entity
+        # in Python cost ~0.5 s of GIL-holding work per scan.
         wmi = win32com.client.GetObject("winmgmts://./root/cimv2")
-        for item in wmi.ExecQuery("SELECT Name,Manufacturer,DeviceID FROM Win32_PnPEntity"):
+        for item in wmi.ExecQuery(
+            "SELECT Name,Manufacturer,DeviceID FROM Win32_PnPEntity WHERE Name LIKE '%(COM%'"):
             name = str(getattr(item, "Name", "") or "")
             match = re.search(r"\((COM\d+)\)", name, re.IGNORECASE)
             if not match:
