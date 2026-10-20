@@ -2,6 +2,7 @@
 
 import logging
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ class KeyboardOutputManager:
         self._effective_mode = STANDARD
         self._owners = {}  # HID usage -> set(source ids)
         self._standard_down = set()  # (source id, token)
+        self._next_raw_retry = 0.0
 
     def _driver_available(self):
         try:
@@ -195,13 +197,18 @@ class KeyboardOutputManager:
         if not isinstance(token, str) or not token.startswith("VK_"):
             return False
         with self._lock:
-            if self._effective_mode == STANDARD and self._keyboard is None:
+            # Retrying runs an uncached pnputil driver probe on the caller's
+            # (controller input) thread, so a failed device is retried at most
+            # every 5 s instead of on every key event.
+            if (self._effective_mode == STANDARD and self._keyboard is None
+                    and time.monotonic() >= self._next_raw_retry):
                 try:
                     from config import CONFIG
                     if getattr(CONFIG, "keyboard_output_mode", None) == RAW_INPUT:
-                        self.activate_raw_input(save=False)
+                        if not self.activate_raw_input(save=False):
+                            self._next_raw_retry = time.monotonic() + 5.0
                 except Exception:
-                    pass
+                    self._next_raw_retry = time.monotonic() + 5.0
             if self.effective_mode() == RAW_INPUT:
                 usage = token_to_hid_usage(token)
                 if usage is None:
@@ -218,6 +225,7 @@ class KeyboardOutputManager:
                 if not self._submit_locked():
                     logger.error("WinUHid keyboard report failed; reverting to Standard")
                     self.activate_standard(save=False)
+                    self._next_raw_retry = time.monotonic() + 5.0
                     return False
                 return True
             return self._standard_event(token, down, source_id)

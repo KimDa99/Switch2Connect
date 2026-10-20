@@ -14049,6 +14049,24 @@ bg_color=panel_bg, widths=[8, 10])
             lambda r=reason, p=candidate_path: request_wired_rescan(r, candidate_path=p),
         )
 
+    def poll_controller_updates(self):
+        if getattr(self, 'is_quitting', False):
+            return
+        # Each message is a full controller list, so only the newest matters.
+        vcs = None
+        while True:
+            try:
+                vcs = self.message_queue.get_nowait()
+            except queue.Empty:
+                break
+        try:
+            if vcs is not None:
+                self.update(vcs)
+        except Exception:
+            logger.exception("Controller UI update failed")
+        finally:
+            self.root.after(50, self.poll_controller_updates)
+
     def poll_wired_device_events(self):
         if getattr(self, 'is_quitting', False):
             return
@@ -16254,16 +16272,15 @@ bg_color=panel_bg, widths=[8, 10])
 
     def start(self):
         self.is_quitting = False
+        # Called from BLE/discoverer threads. A cross-thread event_generate blocks the
+        # caller until Tk handles it, which froze controller input while the UI was
+        # busy, so only enqueue here and let the Tk thread poll.
         def callback(vcs):
             if not getattr(self, 'is_quitting', False):
-                try:
-                    self.message_queue.put(vcs)
-                    self.root.event_generate(CONTROLLER_UPDATED_EVENT)
-                except Exception as e:
-                    logger.debug(f"Ignored Tkinter event generation error: {e}")
+                self.message_queue.put(vcs)
         self.discoverer_callback = callback
-        self.root.bind(CONTROLLER_UPDATED_EVENT, lambda e: self.update(self.message_queue.get()))
-        
+        self.root.after(50, self.poll_controller_updates)
+
         self.power_listener.start()
         try:
             self.wired_device_listener.start()

@@ -177,6 +177,52 @@ from ir_mouse_activation import (
     IrMouseActivationState, advance_ir_mouse_activation,
 )
 
+
+def _chord_tap_keys(seq):
+    """Non-modifier keys of an Alt/Win chord (Alt+Tab, Win+D, ...).
+
+    Held/auto-repeated, Alt+Tab keeps cycling the task switcher for as long as the
+    button is down. These keys are tapped once while the modifiers stay held.
+    """
+    usages = [keyboard_output.token_to_hid_usage(k) for k in seq]
+    if not any(u in (0xE2, 0xE3, 0xE6, 0xE7) for u in usages):
+        return []
+    return [k for k, u in zip(seq, usages) if u is not None and not 0xE0 <= u <= 0xE7]
+
+
+def _coalesce_input_reports(process, buttons_slice):
+    """Skip stale BLE frames when processing falls behind.
+
+    bleak queues one loop callback per notification, so a single stall made every
+    queued frame replay in order: the old input kept going and newer input landed
+    late. Frames are recorded cheaply and drained once per loop pass; only
+    button-edge frames and the newest frame are processed.
+    """
+    pending = []
+    last_buttons = [None]
+
+    def drain():
+        frames = pending[:]
+        pending.clear()
+        newest = len(frames) - 1
+        for index, (sender, data) in enumerate(frames):
+            buttons = bytes(data[buttons_slice])
+            if index == newest or buttons != last_buttons[0]:
+                last_buttons[0] = buttons
+                process(sender, data)
+
+    def callback(sender, data):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            process(sender, data)
+            return
+        pending.append((sender, data))
+        if len(pending) == 1:
+            loop.call_soon(drain)
+
+    return callback
+
 # Non-blocking logging: every thread's logger call only enqueues a record (O(1), no
 # I/O), and a dedicated listener thread does the actual console write.  A synchronous
 # StreamHandler holds the handler lock across the console write, so when the Windows
@@ -4912,6 +4958,8 @@ class Controller:
                                 self.active_custom_keys[btn_id] = (seq, time.perf_counter(), time.perf_counter())
                                 for k in seq:
                                     self._trigger_custom_os_key(k, True, f"mapping:{btn_id}:{k}")
+                                for k in reversed(_chord_tap_keys(seq)):
+                                    self._trigger_custom_os_key(k, False, f"mapping:{btn_id}:{k}")
                         elif not is_pressed and was_pressed:
                             if btn_id in self.active_custom_keys:
                                 seq, _, _ = self.active_custom_keys.pop(btn_id)
@@ -4971,7 +5019,7 @@ class Controller:
                     
             # Handle Hold auto-repeat (500ms initial delay, 30ms repeat interval)
             for btn_id, (seq, initial_time, last_repeat) in self.active_custom_keys.items():
-                if now - initial_time >= 0.5:
+                if now - initial_time >= 0.5 and not _chord_tap_keys(seq):
                     if now - last_repeat >= 0.03:
                         for k in seq:
                             if (k.startswith("VK_")
@@ -5488,6 +5536,10 @@ class Controller:
                     phase_stats["start"] = now
                     phase_stats["count"] = 0
                     phase_stats["totals"] = [0.0, 0.0, 0.0, 0.0, 0.0]
+
+        input_report_callback = _coalesce_input_reports(
+            input_report_callback,
+            slice(2, 5) if product_id == NSO_GAMECUBE_CONTROLLER_PID else slice(4, 8))
 
         if product_id == NSO_GAMECUBE_CONTROLLER_PID:
             # GCN input callback: filter out short packets (command acks, Format 0) and
@@ -7323,8 +7375,10 @@ class Controller:
             return self._mouse_button_event_locked(button_index, down, source_id)
 
     def _mouse_button_event_locked(self, button_index, down, source_id):
-        if (raw_input_mouse.requested_mode() == "Raw Input"
-                and self._raw_mouse is None):
+        # Only the cheap generation check here: requested_mode() probes the driver
+        # with pnputil whenever its 5 s cache expires, which stalled the input
+        # thread 150-800 ms mid-click and left buttons held down.
+        if self._raw_mouse is None:
             self._sync_raw_input_device()
         raw_mouse = self._raw_mouse
         if raw_mouse is not None:
@@ -7363,8 +7417,7 @@ class Controller:
             return self._emit_mouse_scroll_locked(value, horizontal)
 
     def _emit_mouse_scroll_locked(self, value, horizontal=False):
-        if (raw_input_mouse.requested_mode() == "Raw Input"
-                and self._raw_mouse is None):
+        if self._raw_mouse is None:
             self._sync_raw_input_device()
         if self._raw_mouse is not None:
             return bool(self._raw_mouse.report_scroll(value, horizontal))
