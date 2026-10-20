@@ -317,6 +317,25 @@ async def auto_disconnect_checker(quit_event):
         except Exception as e:
             logger.error(f"Error in auto_disconnect_checker: {e}")
 
+def _nintendo_advertisement_filter():
+    """Let Windows drop non-Nintendo advertisements before they reach Python.
+
+    The callback only acts on Nintendo manufacturer data, but bleak parsed every
+    nearby advertisement on the BLE loop thread (over half its CPU while
+    controllers were connected), starving input processing and the Tk UI.
+    """
+    try:
+        from winrt.windows.devices.bluetooth.advertisement import (
+            BluetoothLEAdvertisementFilter, BluetoothLEManufacturerData)
+        manufacturer = BluetoothLEManufacturerData()
+        manufacturer.company_id = NINTENDO_BLUETOOTH_MANUFACTURER_ID
+        advertisement_filter = BluetoothLEAdvertisementFilter()
+        advertisement_filter.advertisement.manufacturer_data.append(manufacturer)
+        return {"AdvertisementFilter": advertisement_filter}
+    except Exception as e:
+        logger.warning("BLE advertisement filter unavailable, scanning unfiltered: %s", e)
+        return {}
+
 async def run_discovery_session(update_controllers_threadsafe, quit_event, startup_bridge_context=None):
     """Own the wired and wireless discovery routes as two independent tasks.
 
@@ -1709,7 +1728,7 @@ async def run_discovery(quit_event, startup_bridge_context=None):
                 await asyncio.sleep(1.0)
                 continue
             try:
-                async with BleakScanner(callback) as scanner:
+                async with BleakScanner(callback, **_nintendo_advertisement_filter()) as scanner:
                     _SYSTEM_BT_AVAILABLE = True
                     _sysbt_diag(
                         "scanner=started combine_joycons=%s power_mode=%s "

@@ -1220,11 +1220,18 @@ class Config:
             values.update(left=left, right=left if linked else right, linked=linked)
         return stored
 
+    def _category_data(self, profile, category):
+        # Not setdefault(): its default argument is evaluated on every call, and
+        # building the category defaults per input frame cost ~18% of the BLE thread.
+        if category not in profile:
+            profile[category] = self.get_default_category_dict(category)
+        return profile[category]
+
     def get_joystick_deadzone_settings(self, profile_name=None, category=None):
         profile_name = profile_name or self.active_profile
         category = category or self.get_current_category()
         profile = self.profiles.setdefault(profile_name, {})
-        category_data = profile.setdefault(category, self.get_default_category_dict(category))
+        category_data = self._category_data(profile, category)
         if not isinstance(category_data, dict):
             category_data = self.get_default_category_dict(category)
             profile[category] = category_data
@@ -1333,7 +1340,7 @@ class Config:
         side = "left" if side == "left" else "right"
         profile_name = profile_name or self.active_profile
         category = category or self.get_current_category()
-        category_data = self.profiles.setdefault(profile_name, {}).setdefault(category, self.get_default_category_dict(category))
+        category_data = self._category_data(self.profiles.setdefault(profile_name, {}), category)
         stored = category_data.get("joycon_ir_sensor")
         if not isinstance(stored, dict):
             stored = build_joycon_ir_sensor_defaults()
@@ -1353,7 +1360,7 @@ class Config:
         profile_name = profile_name or self.active_profile
         category = category or self.get_current_category()
         profile = self.profiles.setdefault(profile_name, {})
-        category_data = profile.setdefault(category, self.get_default_category_dict(category))
+        category_data = self._category_data(profile, category)
         scoped = category_data.get(scope)
         if not isinstance(scoped, dict):
             if scope == MAPPING_SCOPE_IN_APP_GYRO_RSTICK:
