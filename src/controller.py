@@ -148,6 +148,7 @@ from utils import (
 import utils
 import raw_input_mouse
 import keyboard_output
+import stick_keyboard
 from gyro import (
     GYRO_PHASE0_RECORDER,
     IN_APP_HORIZON_PIPELINE_MODE,
@@ -4147,10 +4148,6 @@ class Controller:
             is_left = self.is_joycon_left()
             is_right = self.is_joycon_right()
             is_pro = self.is_pro_controller()
-            raw_left_pressed  = bool(inputData.buttons & 0x01)
-            raw_up_pressed    = bool(inputData.buttons & 0x02)
-            raw_down_pressed  = bool(inputData.buttons & 0x04)
-            raw_right_pressed = bool(inputData.buttons & 0x08)
 
             # Filter out virtual/garbage bits. The top byte of a Joy-Con/Pro report is a
             # STATUS byte (e.g. 0xE0), so bits 24-31 must be discarded (0x03FFFFFF) ??as
@@ -4163,6 +4160,13 @@ class Controller:
             else:
                 inputData.buttons &= 0x03FFFFFF
             self.raw_buttons = inputData.buttons
+            stick_keyboard.process(self, inputData)
+            # Read after stick_keyboard.process: it clears the buttons in stick mode,
+            # and A/B/X/Y mappings run from these copies.
+            raw_left_pressed  = bool(inputData.buttons & 0x01)
+            raw_up_pressed    = bool(inputData.buttons & 0x02)
+            raw_down_pressed  = bool(inputData.buttons & 0x04)
+            raw_right_pressed = bool(inputData.buttons & 0x08)
 
             if not getattr(self, 'is_calibrating', False) and not getattr(self, 'is_mag_calibrating', False) and not getattr(self, 'is_joystick_calibrating', False):
                 self.simulate_mouse(inputData)
@@ -4995,6 +4999,7 @@ class Controller:
                     elif resolved == "Game Bar": trigger_game_bar = True
                     elif resolved == "HDR Toggle": trigger_hdr_toggle = True
                     elif resolved == "On-Screen Keyboard": trigger_on_screen_keyboard = True
+                    elif resolved == "Stick Keyboard": stick_keyboard.enter(self, original_bit)
                     elif resolved in ("Sys Manager", "Task Manager"): trigger_sys_manager = True
                     elif resolved in ("Play/Pause", "Stop", "Next Track", "Previous Track", "Volume Up", "Volume Down", "Media Mute"):
                         trigger_media_action = resolved

@@ -108,7 +108,7 @@ SWITCH_BUTTONS = {
 }
 
 BACK_BUTTON_OPTIONS = [
-    "Default", "Custom", "In-app Gyro", "Gyro Lock", "DJG", "Mode Shift", "Calibration", "Task Manager", "Change Profile", "None", "Home", "Capture", "PrtSc", "On-Screen Keyboard", "Chat", "Mute", "Game Bar", "HDR Toggle", "Play/Pause", "Stop", "Next Track", "Previous Track", "Volume Up", "Volume Down", "Media Mute", "PS_L_Touch", "PS_R_Touch", "PS_C_Click",
+    "Default", "Custom", "In-app Gyro", "Gyro Lock", "DJG", "Mode Shift", "Calibration", "Task Manager", "Change Profile", "None", "Home", "Capture", "PrtSc", "On-Screen Keyboard", "Stick Keyboard", "Chat", "Mute", "Game Bar", "HDR Toggle", "Play/Pause", "Stop", "Next Track", "Previous Track", "Volume Up", "Volume Down", "Media Mute", "PS_L_Touch", "PS_R_Touch", "PS_C_Click",
     "A", "B", "X", "Y", "L", "R", "ZL", "ZR",
     "MINUS", "PLUS", "L_STK", "R_STK", "UP", "DOWN", "LEFT", "RIGHT", "GL", "GR",
     "m1 Left Click", "m2 Middle Click", "m3 Right Click", "m4 Backward", "m5 Forward",
@@ -147,7 +147,7 @@ BACK_BUTTON_CATEGORIES = [
         ["PS_L_Touch", "PS_R_Touch", "PS_C_Click", "Mute"],
     ]),
     ("Windows", [
-        ["Game Bar", "PrtSc", "On-Screen Keyboard", "Task Manager", "HDR Toggle"],
+        ["Game Bar", "PrtSc", "On-Screen Keyboard", "Stick Keyboard", "Task Manager", "HDR Toggle"],
     ]),
     ("Mouse Click", [
         ["m1 Left Click", "m2 Middle Click", "m3 Right Click", "m4 Backward", "m5 Forward"],
@@ -688,6 +688,8 @@ class Config:
         self.active_profile = config.get("active_profile", "Default")
         self.profiles = config.get("profiles", {})
         self.profile_switching_combo_trigger = config.get("profile_switching_combo_trigger", "")
+        # Stick Keyboard: {"buttons": {button: action}, "size": float, "opacity": float}
+        self.stick_keyboard = config.get("stick_keyboard") or {}
         # Change Profile behavior: "Auto" cycles + auto-applies after inactivity;
         # "Manual" opens a selection notification navigated by stick/Dpad + A/B.
         self.change_profile_mode = config.get("change_profile_mode", "Manual")
@@ -1940,6 +1942,7 @@ class Config:
             'change_profile_mode': getattr(self, "change_profile_mode", "Manual"),
             'profile_defaults': self.get_default_profile_settings(),
             'profiles': self.profiles,
+            'stick_keyboard': getattr(self, "stick_keyboard", {}),
             'mouse': {
                 'enabled': self.mouse_config.enabled,
                 'sensitivity': self.mouse_config.sensitivity,

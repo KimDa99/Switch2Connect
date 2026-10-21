@@ -12315,6 +12315,7 @@ bg_color=panel_bg, widths=[8, 10])
             ("controller_mapping", "Controller Mapping"),
             ("in_app_gyro_mode_mapping", "Mode Shift Mapping"),
             ("gyro_passthrough", "Gyro Settings"),
+            ("stick_keyboard", "Stick Keyboard"),
         ]
         for idx, (tab_id, label) in enumerate(self.settings_tab_specs):
             frame = tk.Frame(row_tabs, bg=button_gray)
@@ -12338,6 +12339,8 @@ bg_color=panel_bg, widths=[8, 10])
         self.tab_content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.controller_mapping_frame = tk.Frame(self.tab_content_frame, bg=tab_black)
         self.in_app_gyro_mode_mapping_frame = tk.Frame(self.tab_content_frame, bg=tab_black)
+        self.stick_keyboard_frame = tk.Frame(self.tab_content_frame, bg=tab_black)
+        self._build_stick_keyboard_tab()
 
         shared_frame = tk.LabelFrame(self.controller_mapping_frame, text=" Shared Buttons & Joysticks ", bg=tab_black, fg=text_color, font=scale_font(("Arial", 11, "bold")), bd=1, relief=tk.GROOVE, padx=int(5 * scaling_factor), pady=int(5 * scaling_factor))
         shared_frame.pack(side=tk.TOP, fill=tk.X, pady=int(5 * scaling_factor), padx=(int(5 * scaling_factor), 0))
@@ -12545,6 +12548,151 @@ bg_color=panel_bg, widths=[8, 10])
         CONFIG.save_config()
         self._refresh_mapping_comboboxes()
 
+    def _build_stick_keyboard_tab(self):
+        """Stick Keyboard tab: overlay size/opacity and per-button actions.
+
+        The sticks are fixed (left stick = left half, right stick = right half);
+        every button's action while the mode is on is mapped here.
+        """
+        import stick_keyboard as sk
+        frame = self.stick_keyboard_frame
+        font = scale_font(("Arial", 11, "bold"))
+        pad = int(5 * scaling_factor)
+
+        def conf():
+            if not isinstance(getattr(CONFIG, "stick_keyboard", None), dict):
+                CONFIG.stick_keyboard = {}
+            return CONFIG.stick_keyboard
+
+        def overlay_changed():
+            overlay = getattr(self, "stick_keyboard_overlay", None)
+            if overlay is not None:
+                overlay.apply_settings()
+                overlay.preview()
+            CONFIG.save_config()
+
+        tk.Label(frame, text="Map \"Stick Keyboard\" to a button (e.g. R Stick click) in Controller Mapping. "
+                             "Left stick picks a key on the left half, right stick on the right half.",
+                 bg=tab_black, fg=text_color, font=scale_font(("Arial", 10)), justify=tk.LEFT,
+                 wraplength=int(700 * scaling_factor)).pack(side=tk.TOP, anchor="w", pady=pad)
+
+        look = tk.LabelFrame(frame, text=" Overlay ", bg=tab_black, fg=text_color, font=font,
+                             bd=1, relief=tk.GROOVE, padx=pad, pady=pad)
+        look.pack(side=tk.TOP, fill=tk.X, pady=pad)
+
+        def slider(label, from_, to, resolution, value, on_change):
+            tk.Label(look, text=label, bg=tab_black, fg=text_color, font=font).pack(side=tk.LEFT, padx=(pad, 2))
+            scale = tk.Scale(look, from_=from_, to=to, resolution=resolution, orient=tk.HORIZONTAL,
+                             length=int(160 * scaling_factor), bg=tab_black, fg=text_color,
+                             troughcolor=button_gray, activebackground=highlight_color,
+                             highlightthickness=0, bd=0, sliderrelief=tk.FLAT, font=font)
+            scale.set(value)
+            scale.config(command=lambda v: on_change(float(v)))
+            scale.pack(side=tk.LEFT, padx=(0, int(20 * scaling_factor)))
+
+        def set_size(v):
+            conf()["size"] = v
+            overlay_changed()
+
+        def set_opacity(v):
+            conf()["opacity"] = v / 100.0
+            overlay_changed()
+
+        slider("Size:", 0.5, 2.0, 0.1, conf().get("size", sk.DEFAULT_SIZE), set_size)
+        slider("Opacity (%):", 20, 100, 5, int(conf().get("opacity", sk.DEFAULT_OPACITY) * 100), set_opacity)
+        def layout_text():
+            return "Layout: One stick (phone)" if sk.one_stick() else "Layout: Two sticks (split)"
+
+        def toggle_layout():
+            conf()["layout"] = "split" if sk.one_stick() else "one_stick"
+            layout_btn.config(text=layout_text())
+            refresh()
+            overlay_changed()
+
+        layout_btn = tk.Button(look, text=layout_text(), bg=button_gray, fg=text_color, font=font,
+                               relief=tk.FLAT, bd=0, command=toggle_layout)
+        layout_btn.pack(side=tk.LEFT, padx=pad)
+
+        grid = tk.LabelFrame(frame, text=" Buttons (sticks are fixed) ", bg=tab_black, fg=text_color,
+                             font=font, bd=1, relief=tk.GROOVE, padx=pad, pady=pad)
+        grid.pack(side=tk.TOP, fill=tk.X, pady=pad)
+        value_buttons = {}
+
+        def refresh():
+            actions = sk.button_actions()
+            for name, btn in value_buttons.items():
+                btn.config(text=sk.action_label(actions[name]))
+
+        def set_action(name, action):
+            buttons = conf().setdefault("buttons", {})
+            if action is None:
+                buttons.pop(name, None)
+            else:
+                buttons[name] = action
+            refresh()
+            overlay_changed()
+
+        def record(name):
+            btn = value_buttons[name]
+            btn.config(text="Press key(s)...")
+            btn.focus_set()
+            seq, down, binds = [], set(), {}
+
+            def finish():
+                for seq_name, bind_id in binds.items():
+                    self.root.unbind(seq_name, bind_id)
+                if seq:
+                    set_action(name, "+".join(seq))
+                else:
+                    refresh()
+
+            def on_press(e):
+                token = f"VK_{e.keysym.upper()}"
+                down.add(token)
+                if token not in seq:
+                    seq.append(token)
+                return "break"
+
+            def on_release(e):
+                down.discard(f"VK_{e.keysym.upper()}")
+                if not down:
+                    finish()
+                return "break"
+
+            binds["<KeyPress>"] = self.root.bind("<KeyPress>", on_press, add="+")
+            binds["<KeyRelease>"] = self.root.bind("<KeyRelease>", on_release, add="+")
+
+        def open_menu(name):
+            menu = tk.Menu(self.root, tearoff=0, bg=background_color, fg=text_color,
+                           activebackground=highlight_color, font=scale_font(("Arial", 10)))
+            menu.add_command(label="Record key...", command=lambda: record(name))
+            menu.add_command(label="Type left-stick key", command=lambda: set_action(name, sk.TYPE_LEFT))
+            menu.add_command(label="Type right-stick key", command=lambda: set_action(name, sk.TYPE_RIGHT))
+            menu.add_command(label="None", command=lambda: set_action(name, sk.NONE))
+            menu.add_separator()
+            menu.add_command(label="Reset to default", command=lambda: set_action(name, None))
+            btn = value_buttons[name]
+            menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height())
+
+        columns = 4
+        for index, name in enumerate(sk.DEFAULT_BUTTONS):
+            r, c = divmod(index, columns)
+            tk.Label(grid, text=name, bg=tab_black, fg=text_color, font=font, anchor="e",
+                     width=6).grid(row=r, column=c * 2, padx=(pad, 2), pady=2, sticky="e")
+            btn = tk.Button(grid, width=14, bg=button_gray, fg=text_color, font=font,
+                            relief=tk.FLAT, bd=0, command=lambda n=name: open_menu(n))
+            btn.grid(row=r, column=c * 2 + 1, padx=(0, pad), pady=2)
+            value_buttons[name] = btn
+        refresh()
+
+        def reset_all():
+            conf().pop("buttons", None)
+            refresh()
+            overlay_changed()
+
+        tk.Button(frame, text="Reset all buttons", bg=button_gray, fg=text_color, font=font,
+                  relief=tk.FLAT, bd=0, command=reset_all).pack(side=tk.TOP, anchor="w", pady=pad)
+
     def show_settings_tab(self, tab_id):
         self.settings_active_tab = tab_id
         for key, widgets in getattr(self, "settings_tab_buttons", {}).items():
@@ -12553,7 +12701,7 @@ bg_color=panel_bg, widths=[8, 10])
             frame.config(bg=tab_black if is_active else button_gray)
             btn.config(bg=tab_black if is_active else button_gray, fg=text_color)
 
-        for frame_name in ("controller_mapping_frame", "in_app_gyro_mode_mapping_frame", "djg_frame", "gyro_frame", "comp_frame"):
+        for frame_name in ("controller_mapping_frame", "in_app_gyro_mode_mapping_frame", "djg_frame", "gyro_frame", "comp_frame", "stick_keyboard_frame"):
             frame = getattr(self, frame_name, None)
             if frame is not None:
                 frame.pack_forget()
@@ -12568,6 +12716,8 @@ bg_color=panel_bg, widths=[8, 10])
             if getattr(CONFIG, 'simulation_mode', '') != "Switch1":
                 self.djg_frame.pack(side=tk.TOP, fill=tk.X, pady=int(5 * scaling_factor))
             self.comp_frame.pack(side=tk.TOP, fill=tk.X, pady=int(5 * scaling_factor))
+        elif tab_id == "stick_keyboard":
+            self.stick_keyboard_frame.pack(side=tk.TOP, fill=tk.X)
         # Refresh the now-active mapping tab so In-app Gyro sync from the other
         # scope (synced at config level) is reflected in the comboboxes.
         if tab_id in ("controller_mapping", "in_app_gyro_mode_mapping"):
@@ -16280,6 +16430,11 @@ bg_color=panel_bg, widths=[8, 10])
                 self.message_queue.put(vcs)
         self.discoverer_callback = callback
         self.root.after(50, self.poll_controller_updates)
+        try:
+            import stick_keyboard
+            self.stick_keyboard_overlay = stick_keyboard.Overlay(self.root)
+        except Exception:
+            logger.exception("Stick keyboard overlay unavailable")
 
         self.power_listener.start()
         try:
