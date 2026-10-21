@@ -248,7 +248,13 @@ for _h in list(_root_logger.handlers):
     _root_logger.removeHandler(_h)
 _root_logger.addHandler(_QueueHandler(_log_queue))
 _root_logger.setLevel(logging.INFO)
-_log_listener = _QueueListener(_log_queue, _console_handler, respect_handler_level=True)
+# Also keep the log on disk (the console can freeze or be closed); 2 x 5 MB cap.
+from logging.handlers import RotatingFileHandler as _RotatingFileHandler
+_file_handler = _RotatingFileHandler(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "switch2connect.log"),
+    maxBytes=5 * 1024 * 1024, backupCount=1, encoding="utf-8")
+_file_handler.setFormatter(_console_handler.formatter)
+_log_listener = _QueueListener(_log_queue, _console_handler, _file_handler, respect_handler_level=True)
 _log_listener.start()
 _atexit.register(_log_listener.stop)
 # Bleak's WinRT scanner logs every received advertisement at DEBUG and is extremely

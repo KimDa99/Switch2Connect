@@ -317,6 +317,22 @@ async def auto_disconnect_checker(quit_event):
         except Exception as e:
             logger.error(f"Error in auto_disconnect_checker: {e}")
 
+_BACKGROUND_TASKS = set()
+
+
+def _spawn(coro):
+    """create_task() that keeps the task alive until it finishes.
+
+    The event loop holds tasks only weakly, so a connect attempt waiting on
+    WinRT could be garbage-collected mid-await: its coroutine closed silently,
+    no error logged, and the controller had to advertise again to connect.
+    """
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
+
 def _nintendo_advertisement_filter():
     """Let Windows drop non-Nintendo advertisements before they reach Python.
 
@@ -1700,7 +1716,7 @@ async def run_discovery(quit_event, startup_bridge_context=None):
                         _connecting_macs.add(device.address)
                         async with GLOBAL_LOCK:
                             pending_connections_count += 1
-                        asyncio.create_task(add_controller(device, False, product_id))
+                        _spawn(add_controller(device, False, product_id))
                     elif reconnect_mac == host_mac_value:
                         sysbt_side_decisions[side] = "reconnecting"
                         _sysbt_diag("device=%s side=%s decision=connect_paired reconnect=local",
@@ -1709,7 +1725,7 @@ async def run_discovery(quit_event, startup_bridge_context=None):
                         _connecting_macs.add(device.address)
                         async with GLOBAL_LOCK:
                             pending_connections_count += 1
-                        asyncio.create_task(add_controller(device, True, product_id))
+                        _spawn(add_controller(device, True, product_id))
                     else:
                         sysbt_side_decisions[side] = "blocked_other_host"
                         _sysbt_diag(
